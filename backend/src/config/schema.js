@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS invoices(
   client_id       UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   company_id      UUID NOT NULL REFERENCES company_settings(id) ON DELETE CASCADE,
   invoice_number  TEXT NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'draft' --draft | sent | paid
+  status          TEXT NOT NULL DEFAULT 'draft', --draft | sent | paid
   issue_date      DATE NOT NULL DEFAULT CURRENT_DATE,
   due_date        DATE,
   currency        TEXT NOT NULL DEFAULT 'USD',
