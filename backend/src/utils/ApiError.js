@@ -136,4 +136,4 @@ function defaultErrorCode(status) {
   return map[status] || "ERROR";
 }
 
-module.exports = { ApiError };
+module.exports = ApiError;

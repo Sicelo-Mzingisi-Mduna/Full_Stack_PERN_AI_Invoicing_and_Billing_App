@@ -13,26 +13,26 @@ const logger = {
 // ─────────────────────────────────────────────────────────────────────────────
 // n8n dispatch — fire-and-forget, never blocks or throws
 // ─────────────────────────────────────────────────────────────────────────────
-function dispatchToN8n(payload) {
-  if (!env.N8N_API_ERROR_LOGGER_WEBHOOK_URL) return;
-  // Do not await — we never want webhook latency on the request path
-  fetch(env.N8N_API_ERROR_LOGGER_WEBHOOK_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(env.N8N_API_ERROR_LOGGER_WEBHOOK_SECRET
-        ? { "X-Webhook-Secret": env.N8N_API_ERROR_LOGGER_WEBHOOK_SECRET }
-        : {}),
-    },
-    body: JSON.stringify(payload),
-  }).catch((e) => {
-    logger.warn({
-      eventType: "n8n_dispatch_failed",
-      reason: e?.message,
-      originalCode: payload?.error?.code,
-    });
-  });
-}
+// function dispatchToN8n(payload) {
+//   if (!env.N8N_API_ERROR_LOGGER_WEBHOOK_URL) return;
+//   // Do not await — we never want webhook latency on the request path
+//   fetch(env.N8N_API_ERROR_LOGGER_WEBHOOK_URL, {
+//     method: "POST",
+//     headers: {
+//       "Content-Type": "application/json",
+//       ...(env.N8N_API_ERROR_LOGGER_WEBHOOK_SECRET
+//         ? { "X-Webhook-Secret": env.N8N_API_ERROR_LOGGER_WEBHOOK_SECRET }
+//         : {}),
+//     },
+//     body: JSON.stringify(payload),
+//   }).catch((e) => {
+//     logger.warn({
+//       eventType: "n8n_dispatch_failed",
+//       reason: e?.message,
+//       originalCode: payload?.error?.code,
+//     });
+//   });
+// }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PostgreSQL SQLSTATE map (enriched with plain-English metadata)
@@ -1086,7 +1086,7 @@ function errorHandler(err, req, res, next) {
   else logger.warn(event);
 
   // ── Fire-and-forget to n8n ────────────────────────────────────────────────
-  dispatchToN8n(event);
+  // dispatchToN8n(event);
 
   // ── Response payload ─────────────────────────────────────────────────────
   const body = {
