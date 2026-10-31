@@ -41,6 +41,16 @@ app.use(morgan(env.isProd ? "combined" : "dev"));
 // Routes
 app.use("/api/health", healthRoute);
 
+app.get("/", (req, res) => {
+  res.status(200).json({
+    name: "AI Invoice Manager API",
+    status: "ok",
+    version: "0.1.0",
+    health: "/api/health/live",
+    docs: "/api/health",
+  });
+});
+
 // Errors (must be last)
 app.use(notFound);
 app.use(errorHandler);
