@@ -1,50 +1,67 @@
-const express = require("express");
-const cors = require("cors");
-const cookieParser = require("cookie-parser");
-const morgan = require("morgan");
+const http = require("http");
 
+const app = require("./app");
 const env = require("./config/env");
-const {connectDB} = require("./config/db");
-const {notFound, errorHandler} = require("./middleware/errorHandler");
+const { connectDB, disconnectDB } = require("./config/db");
 
-const healthRoute = require("./routes/health");
+let server;
+let shuttingDown = false;
 
-const app = express ();
-
-app.set("trust proxy", 1);
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  })
-);
-
-app.use(express.json({limit: "12mb"}));
-app.use(express.urlencoded({extended: true, limit: "12mb"}));
-app.use(cookieParser());
-if(!env.isProd) app.use(morgan("dev"));
-
-app.use("/api/health", healthRoute);
-
-app.use(notFound);
-app.use(errorHandler);
-
-async function start(){
-  try{
+async function start() {
+  try {
     await connectDB();
-    app.listen(env.port, () => {
-      console.log(`Server listening on http://localhost:${env.port} (${env.nodeEnv})`);
+
+    server = http.createServer(app);
+    server.listen(env.port, "0.0.0.0", () => {
+      console.log(
+        `Server listening on http://0.0.0.0:${env.port} (${env.nodeEnv})`
+      );
     });
-  }catch(err){
-    console.error("Failed to start server!: ", err.message);
+  } catch (err) {
+    console.error("Failed to start server:", err);
     process.exit(1);
   }
 }
 
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received — shutting down gracefully...`);
+
+  if (!server) return process.exit(0);
+
+  server.close(async (err) => {
+    if (err) {
+      console.error("Error closing HTTP server:", err);
+      return process.exit(1);
+    }
+    try {
+      if (typeof disconnectDB === "function") await disconnectDB();
+      console.log("Shutdown complete.");
+      process.exit(0);
+    } catch (e) {
+      console.error("Error during DB disconnect:", e);
+      process.exit(1);
+    }
+  });
+
+  // Force exit if graceful shutdown hangs (Render kills after ~30s anyway)
+  setTimeout(() => {
+    console.error("Forced shutdown after timeout.");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 process.on("unhandledRejection", (reason) => {
-  console.error("unhandled rejection:", reason);
+  console.error("Unhandled rejection:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+  shutdown("uncaughtException");
 });
 
 start();
-
-module.exports = app;
