@@ -7,6 +7,7 @@ const helmet = require("helmet");
 const env = require("./config/env");
 const { notFound, errorHandler } = require("./middleware/errorHandler");
 const healthRoute = require("./routes/health");
+const requestLogger = require("./middleware/requestLogger");
 
 const app = express();
 
