@@ -67,6 +67,20 @@ module.exports = {
   clientOrigins: corsOrigins,
   geminiApiKey: process.env.GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+
+  // --- n8n integration (optional; toggle with N8N_ENABLED) ---
+  n8n: {
+    enabled: process.env.N8N_ENABLED !== "false", // on by default, opt-out
+    baseUrl: process.env.N8N_URL || "https://n8n-with-python-f7bi.onrender.com",
+    webhookUrl: process.env.N8N_WEBHOOK_URL || "",
+    logWebhookUrl: process.env.N8N_LOG_WEBHOOK_URL || "",
+    logWebhookSecret: process.env.N8N_LOG_WEBHOOK_SECRET || "",
+    pingIntervalMs: Number(process.env.N8N_PING_INTERVAL_MS) || 2 * 60 * 1000,
+    activeWindowMs: Number(process.env.N8N_ACTIVE_WINDOW_MS) || 60 * 60 * 1000,
+    initialTimeoutMs: Number(process.env.N8N_INITIAL_TIMEOUT_MS) || 60_000,
+    retryDelayMs: Number(process.env.N8N_RETRY_DELAY_MS) || 10_000,
+    maxRetries: Number(process.env.N8N_MAX_RETRIES) || 5,
+  },
 };
 
 // code "$env:USERPROFILE\.secrets\ai-invoice-manager\.env"
