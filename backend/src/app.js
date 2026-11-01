@@ -38,6 +38,9 @@ app.use(cookieParser());
 // Logging
 app.use(morgan(env.isProd ? "combined" : "dev"));
 
+// Logging middleware
+app.use(requestLogger);
+
 // Routes
 app.use("/api/health", healthRoute);
 
