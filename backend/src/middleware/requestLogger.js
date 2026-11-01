@@ -1,4 +1,5 @@
 // middleware/requestLogger.js
+const crypto = require("crypto");
 const env = require("../config/env");
 const { loggers } = require("../services/n8n");
 const { pool } = require("../config/db");
@@ -26,12 +27,20 @@ module.exports = function requestLogger(req, res, next) {
     return next();
   }
 
+  // Honor an incoming correlation ID, otherwise generate one.
+  const requestId =
+    (req.headers["x-request-id"] || "").trim() || crypto.randomUUID();
+
+  // Echo it back so the client can log/report it.
+  res.setHeader("X-Request-ID", requestId);
+
   const startedAt = Date.now();
 
   res.on("finish", () => {
     const now = Date.now();
 
     loggers.requests.info("http_request", {
+      requestId,
       userId:            req.user?.id ?? null,
       method:            req.method,
       path:              req.originalUrl || req.path,
