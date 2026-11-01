@@ -36,10 +36,22 @@ function createLogger({ webhookUrl, secret, event }) {
   }
 
   return {
-    debug: (msg, meta) => send("debug", msg, meta),
-    info:  (msg, meta) => send("info",  msg, meta),
-    warn:  (msg, meta) => send("warn",  msg, meta),
+    
+    // 1) Urgent — e.g "The server is down, page someone now"
+    //something that needs fixing
     error: (msg, meta) => send("error", msg, meta),
+
+    // 2) High — e.g "payments are failing, fix it today"
+    //something to keep an eye on
+    warn:  (msg, meta) => send("warn",  msg, meta),
+
+    // 3) Normal — e.g "user created an invoice, FYI"
+    //the story of what your app is doing
+    info:  (msg, meta) => send("info",  msg, meta),
+
+    // 4) Low — e.g "here's a debug trace, ignore unless investigating"
+    //noise you only want while debugging
+    debug: (msg, meta) => send("debug", msg, meta),
   };
 }
 
