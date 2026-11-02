@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const morgan = require("morgan");
+const trackActivity = require("./middleware/trackActivity");
 const helmet = require("helmet");
 
 const env = require("./config/env");
@@ -38,6 +39,8 @@ app.use(cookieParser());
 
 // Logging
 app.use(morgan(env.isProd ? "combined" : "dev"));
+
+app.use(trackActivity); 
 
 // Logging middleware
 app.use(requestLogger);
