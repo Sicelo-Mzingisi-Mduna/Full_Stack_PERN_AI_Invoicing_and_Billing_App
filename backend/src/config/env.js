@@ -95,6 +95,11 @@ module.exports = {
       // },
       },
   },
+
+  cronjob: {
+    apiKey: process.env.CRONJOB_API_KEY || "",
+    jobId:   process.env.CRONJOB_JOB_ID   || "",
+  },
 };
 
 // code "$env:USERPROFILE\.secrets\ai-invoice-manager\.env"
