@@ -10,18 +10,26 @@ class N8nPinger {
     this.lastActivityAt = null;
     this.lastStatus = null;
     this.running = false;
+    this.cronEnabled = false;
   }
 
   /** Call from middleware on any real user request. */
   touch() {
-    if (!env.n8n.enabled) return;
-    this.lastActivityAt = Date.now();
-    if (!this.running) {
-      this.start();
-      // Fire-and-forget: enable the cron keep-alive job.
-      cronJob.enable().catch(err => console.error("[pinger] cron enable failed", err));
-    }
+  if (!env.n8n.enabled) return;
+  this.lastActivityAt = Date.now();
+
+  if (!this.running) {
+    this.start();
   }
+
+  if (!this.cronEnabled) {                    
+    this.cronEnabled = true;
+    cronJob.enable().catch((err) => {
+      this.cronEnabled = false;              
+      console.error("[pinger] cron enable failed", err);
+    });
+  }
+}
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
@@ -41,10 +49,11 @@ class N8nPinger {
     this.retryCount = 0;
     this.running = false;
     this.lastActivityAt = null;
-
-    // Fire-and-forget: disable the cron keep-alive job.
-    cronJob.disable().catch(err => console.error("[pinger] cron disable failed", err));
-  }
+    this.cronEnabled = false;                   // ← ADD
+    cronJob.disable().catch((err) =>
+      console.error("[pinger] cron disable failed", err)
+    );
+}
 
   _tick() {
     const idle = !this.lastActivityAt || Date.now() - this.lastActivityAt > env.n8n.activeWindowMs;
