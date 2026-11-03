@@ -1,5 +1,6 @@
 const env = require("../../config/env");
 const { request } = require("./n8nClient");
+const cronJob = require("../cronjob");
 
 class N8nPinger {
   constructor() {
@@ -15,7 +16,11 @@ class N8nPinger {
   touch() {
     if (!env.n8n.enabled) return;
     this.lastActivityAt = Date.now();
-    if (!this.running) this.start();
+    if (!this.running) {
+      this.start();
+      // Fire-and-forget: enable the cron keep-alive job.
+      cronJob.enable().catch(err => console.error("[pinger] cron enable failed", err));
+    }
   }
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
@@ -36,6 +41,9 @@ class N8nPinger {
     this.retryCount = 0;
     this.running = false;
     this.lastActivityAt = null;
+
+    // Fire-and-forget: disable the cron keep-alive job.
+    cronJob.disable().catch(err => console.error("[pinger] cron disable failed", err));
   }
 
   _tick() {
