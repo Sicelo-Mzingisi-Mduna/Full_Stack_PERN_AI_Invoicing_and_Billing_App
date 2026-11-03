@@ -11,34 +11,35 @@ class N8nPinger {
     this.lastStatus = null;
     this.running = false;
     this.cronEnabled = false;
+    this._lastBaseStatus = null;
+    this._pingerStartedAt = null;
   }
 
   /** Call from middleware on any real user request. */
   touch() {
-  if (!env.n8n.enabled) return;
-  this.lastActivityAt = Date.now();
-
-  if (!this.running) {
-    this.start();
+    if (!env.n8n.enabled) return;
+    this.lastActivityAt = Date.now();
+    if (!this.running) this.start();
+    if (!this.cronEnabled) {
+      this.cronEnabled = true;
+      cronJob.enable().catch((err) => {
+        this.cronEnabled = false;
+        console.error("[pinger] cron enable failed", err);
+      });
+    }
   }
-
-  if (!this.cronEnabled) {                    
-    this.cronEnabled = true;
-    cronJob.enable().catch((err) => {
-      this.cronEnabled = false;              
-      console.error("[pinger] cron enable failed", err);
-    });
-  }
-}
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
     if (this.running || !env.n8n.enabled) return;
+    // Fresh session — state for wake-up logging
+    this._pingerStartedAt = Date.now();
+    this._lastBaseStatus = null;
     this.running = true;
     this._ping(env.n8n.initialTimeoutMs);
 
     this.interval = setInterval(() => this._tick(), env.n8n.pingIntervalMs);
-    this.interval.unref?.(); // don't hold the event loop open
+    this.interval.unref?.();
   }
 
   async stop() {
@@ -49,13 +50,24 @@ class N8nPinger {
     this.retryCount = 0;
     this.running = false;
     this.lastActivityAt = null;
-    this.cronEnabled = false;                   
+    this.cronEnabled = false;
+    // Reset wake-up logging state so the next session starts clean
+    this._pingerStartedAt = null;
+    this._lastBaseStatus = null;
+
     try {
       await cronJob.disable();
+      // RACE GUARD: touch() may have restarted the pinger during our await.
+      // If so, cron is now OFF but should be ON. Re-enable.
+      if (this.running) {
+        console.warn("[pinger] restart detected during cron disable — re-enabling");
+        await cronJob.enable();
+        this.cronEnabled = true;
+      }
     } catch (err) {
       console.error("[pinger] cron disable failed", err);
     }
-}
+  }
 
   _tick() {
     const idle = !this.lastActivityAt || Date.now() - this.lastActivityAt > env.n8n.activeWindowMs;
@@ -64,8 +76,17 @@ class N8nPinger {
   }
 
   async _ping(timeoutMs) {
+    const startedAt = Date.now();
     try {
       const res = await request(env.n8n.baseUrl, { timeoutMs });
+
+      const previous = this._lastBaseStatus;
+      this._lastBaseStatus = 'up';
+      if (previous === 'down' || previous === null) {
+        const wakeMs = this._pingerStartedAt ? Date.now() - this._pingerStartedAt : null;
+        console.log(`🟢 [n8n pinger] n8n AWAKE at ${new Date().toISOString()} (wake took ${wakeMs}ms${previous === 'down' ? ', after failures' : ', fresh session'})`);
+      }
+
       this.retryCount = 0;
       this.lastStatus = res.status;
 
@@ -73,12 +94,20 @@ class N8nPinger {
         try {
           const wh = await request(env.n8n.webhookUrl, { timeoutMs: 15_000 });
           this.lastStatus = await wh.text();
-        } catch {
+          console.log(`[n8n pinger] webhook OK (total ${Date.now() - startedAt}ms)`);
+        } catch (err) {
           this.lastStatus = null;
+          console.log(`[n8n pinger] webhook FAILED: ${err.message}`);
         }
       }
     } catch (err) {
-      console.warn(`[n8n pinger] ping failed: ${err.message}`);
+      const previous = this._lastBaseStatus;
+      this._lastBaseStatus = 'down';
+      if (previous === 'up') {
+        console.log(`🔴 [n8n pinger] n8n UNREACHABLE at ${new Date().toISOString()} (was up, now failing)`);
+      }
+
+      console.log(`[n8n pinger] base ping FAILED: ${err.message} (${Date.now() - startedAt}ms)`);
       if (this.retryCount < env.n8n.maxRetries) {
         this.retryCount++;
         this.retryTimer = setTimeout(() => this._ping(timeoutMs), env.n8n.retryDelayMs);
