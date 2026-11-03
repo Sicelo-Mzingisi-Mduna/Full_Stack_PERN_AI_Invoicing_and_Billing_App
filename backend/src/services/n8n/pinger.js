@@ -17,17 +17,22 @@ class N8nPinger {
 
   /** Call from middleware on any real user request. */
   touch() {
-    if (!env.n8n.enabled) return;
-    this.lastActivityAt = Date.now();
-    if (!this.running) this.start();
-    if (!this.cronEnabled) {
-      this.cronEnabled = true;
-      cronJob.enable().catch((err) => {
+  if (!env.n8n.enabled) return;
+  this.lastActivityAt = Date.now();
+  if (!this.running) this.start();
+  console.log("[pinger] touch() — cronEnabled =", this.cronEnabled);
+  if (!this.cronEnabled) {
+    this.cronEnabled = true;
+    cronJob.enable()
+      .then(() => console.log("[pinger] cron enable SUCCESS"))
+      .catch((err) => {
         this.cronEnabled = false;
         console.error("[pinger] cron enable failed", err);
       });
-    }
+  } else {
+    console.log("[pinger] skipping cron enable (already enabled)");
   }
+}
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
