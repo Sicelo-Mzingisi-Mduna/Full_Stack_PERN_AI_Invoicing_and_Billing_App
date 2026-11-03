@@ -41,7 +41,7 @@ class N8nPinger {
     this.interval.unref?.(); // don't hold the event loop open
   }
 
-  stop() {
+  async stop() {
     if (this.interval) clearInterval(this.interval);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.interval = null;
@@ -49,10 +49,12 @@ class N8nPinger {
     this.retryCount = 0;
     this.running = false;
     this.lastActivityAt = null;
-    this.cronEnabled = false;                   // ← ADD
-    cronJob.disable().catch((err) =>
-      console.error("[pinger] cron disable failed", err)
-    );
+    this.cronEnabled = false;                   
+    try {
+      await cronJob.disable();
+    } catch (err) {
+      console.error("[pinger] cron disable failed", err);
+    }
 }
 
   _tick() {

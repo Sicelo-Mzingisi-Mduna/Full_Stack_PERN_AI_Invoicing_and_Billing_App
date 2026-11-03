@@ -25,11 +25,16 @@ async function start() {
   }
 }
 
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`${signal} received — shutting down gracefully...`);
-  pinger.stop(); // stop n8n pinger
+  
+  try {
+    await pinger.stop();   // ← await the disable
+  } catch (e) {
+    console.error("Error stopping pinger:", e);
+  }
 
   if (!server) return process.exit(0);
 
