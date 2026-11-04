@@ -17,35 +17,28 @@ class N8nPinger {
 
   /** Call from middleware on any real user request. */
   touch() {
-  if (!env.n8n.enabled) return;
-  this.lastActivityAt = Date.now();
-  if (!this.running) this.start();
-  console.log("[pinger] touch() — cronEnabled =", this.cronEnabled);
-  if (!this.cronEnabled) {
-    this.cronEnabled = true;
-    cronJob.enable()
-      .then(() => console.log("[pinger] cron enable SUCCESS"))
-      .catch((err) => {
-        this.cronEnabled = false;
-        console.error("[pinger] cron enable failed", err);
-      });
-  } else {
-    console.log("[pinger] skipping cron enable (already enabled)");
+    if (!env.n8n.enabled) return;
+    this.lastActivityAt = Date.now();
+    if (!this.running) this.start();
+    console.log("[pinger] touch() — cronEnabled =", this.cronEnabled);
+    if (!this.cronEnabled) {
+      this.cronEnabled = true;
+      this._enableCrons();
+    }
   }
-}
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
-  if (this.running || !env.n8n.enabled) return;
-  this._pingerStartedAt = Date.now();
-  this._lastBaseStatus = null;
-  this.lastActivityAt = Date.now();   // ← ADD: treat boot as activity
-  this.running = true;
-  this._ping(env.n8n.initialTimeoutMs);
+    if (this.running || !env.n8n.enabled) return;
+    this._pingerStartedAt = Date.now();
+    this._lastBaseStatus = null;
+    // NOTE: do NOT set lastActivityAt here — only touch() marks real user activity.
+    this.running = true;
+    this._ping(env.n8n.initialTimeoutMs);
 
-  this.interval = setInterval(() => this._tick(), env.n8n.pingIntervalMs);
-  this.interval.unref?.();
-}
+    this.interval = setInterval(() => this._tick(), env.n8n.pingIntervalMs);
+    this.interval.unref?.();
+  }
 
   async stop() {
     if (this.interval) clearInterval(this.interval);
@@ -56,21 +49,43 @@ class N8nPinger {
     this.running = false;
     this.lastActivityAt = null;
     this.cronEnabled = false;
-    // Reset wake-up logging state so the next session starts clean
     this._pingerStartedAt = null;
     this._lastBaseStatus = null;
 
-    try {
-      await cronJob.disable();
-      // RACE GUARD: touch() may have restarted the pinger during our await.
-      // If so, cron is now OFF but should be ON. Re-enable.
-      if (this.running) {
-        console.warn("[pinger] restart detected during cron disable — re-enabling");
-        await cronJob.enable();
-        this.cronEnabled = true;
-      }
-    } catch (err) {
-      console.error("[pinger] cron disable failed", err);
+    await this._disableCrons();
+
+    // RACE GUARD: touch() may have restarted the pinger during our await.
+    if (this.running) {
+      console.warn("[pinger] restart detected during cron disable — re-enabling");
+      this.cronEnabled = true;
+      await this._enableCrons();
+    }
+  }
+
+  async _enableCrons() {
+    const results = await Promise.allSettled([
+      cronJob.enableBackend(),
+      cronJob.enableN8n(),
+    ]);
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      console.error(`[pinger] cron enable failed for ${failed.length} job(s) — will retry on next touch`);
+      this.cronEnabled = false;
+      return;
+    }
+    console.log("[pinger] both cron jobs enabled");
+  }
+
+  async _disableCrons() {
+    const results = await Promise.allSettled([
+      cronJob.disableBackend(),
+      cronJob.disableN8n(),
+    ]);
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      console.error(`[pinger] cron disable failed for ${failed.length} job(s)`);
+    } else {
+      console.log("[pinger] both cron jobs disabled");
     }
   }
 
@@ -81,64 +96,68 @@ class N8nPinger {
   }
 
   async _ping(timeoutMs) {
-  const startedAt = Date.now();
-  // Cache-bust: force Render's edge to check real state, not serve cached 503
-  const bustUrl = `${env.n8n.baseUrl}/?t=${Date.now()}`;
+    const startedAt = Date.now();
 
-  try {
-    const res = await request(bustUrl, { timeoutMs });
+    try {
+      const res = await request(env.n8n.baseUrl, { timeoutMs });
 
-    // LOG the status — this is the key diagnostic line
-    console.log(`[n8n pinger] base ping → ${res.status} (${Date.now() - startedAt}ms)`);
+      console.log(`[n8n pinger] base ping → ${res.status} (${Date.now() - startedAt}ms)`);
 
-    // Treat ANY non-2xx as "not ready" — throw so retries kick in
-    if (!res.ok) {
-      throw new Error(`base ping returned HTTP ${res.status}`);
-    }
+      // 429 (Cloudflare) or 503 (Render booting) = not ready.
+      // Cron #1 will handle the wake from its unblocked IPs. Skip retries.
+      if (res.status === 429 || res.status === 503) {
+        this._lastBaseStatus = 'down';
+        this.retryCount = 0;
+        console.log(`[n8n pinger] ${res.status} — cron #1 will wake n8n, skipping retries`);
+        return;
+      }
 
-    // --- Success path (only reached on 2xx) ---
-    const previous = this._lastBaseStatus;
-    this._lastBaseStatus = 'up';
-    if (previous === 'down' || previous === null) {
-      const wakeMs = this._pingerStartedAt ? Date.now() - this._pingerStartedAt : null;
-      console.log(`🟢 [n8n pinger] n8n AWAKE at ${new Date().toISOString()} (wake took ${wakeMs}ms${previous === 'down' ? ', after failures' : ', fresh session'})`);
-    }
+      if (!res.ok) {
+        throw new Error(`base ping returned HTTP ${res.status}`);
+      }
 
-    this.retryCount = 0;
-    this.lastStatus = res.status;
+      const previous = this._lastBaseStatus;
+      this._lastBaseStatus = 'up';
+      if (previous === 'down' || previous === null) {
+        const wakeMs = this._pingerStartedAt ? Date.now() - this._pingerStartedAt : null;
+        console.log(`🟢 [n8n pinger] n8n AWAKE at ${new Date().toISOString()} (wake took ${wakeMs}ms${previous === 'down' ? ', after failures' : ', fresh session'})`);
+      }
 
-    if (env.n8n.webhookUrl) {
-      try {
-        const wh = await request(env.n8n.webhookUrl, { timeoutMs: 15_000 });
-        if (!wh.ok) {
-          throw new Error(`webhook returned HTTP ${wh.status}`);
+      this.retryCount = 0;
+      this.lastStatus = res.status;
+
+      if (env.n8n.webhookUrl) {
+        try {
+          const wh = await request(env.n8n.webhookUrl, { timeoutMs: 15_000 });
+          if (!wh.ok) {
+            throw new Error(`webhook returned HTTP ${wh.status}`);
+          }
+          this.lastStatus = await wh.text();
+          console.log(`[n8n pinger] webhook OK (total ${Date.now() - startedAt}ms)`);
+        } catch (err) {
+          this.lastStatus = null;
+          console.log(`[n8n pinger] webhook FAILED: ${err.message}`);
         }
-        this.lastStatus = await wh.text();
-        console.log(`[n8n pinger] webhook OK (total ${Date.now() - startedAt}ms)`);
-      } catch (err) {
-        this.lastStatus = null;
-        console.log(`[n8n pinger] webhook FAILED: ${err.message}`);
+      }
+    } catch (err) {
+      const previous = this._lastBaseStatus;
+      this._lastBaseStatus = 'down';
+      if (previous === 'up') {
+        console.log(`🔴 [n8n pinger] n8n UNREACHABLE at ${new Date().toISOString()} (was up, now failing)`);
+      }
+
+      console.log(`[n8n pinger] base ping FAILED: ${err.message} (${Date.now() - startedAt}ms)`);
+      if (this.retryCount < env.n8n.maxRetries) {
+        this.retryCount++;
+        console.log(`[n8n pinger] retry ${this.retryCount}/${env.n8n.maxRetries} in ${env.n8n.retryDelayMs / 1000}s`);
+        this.retryTimer = setTimeout(() => this._ping(timeoutMs), env.n8n.retryDelayMs);
+        this.retryTimer.unref?.();
+      } else {
+        console.log(`[n8n pinger] retries exhausted, waiting for next tick`);
+        this.retryCount = 0;
       }
     }
-  } catch (err) {
-    const previous = this._lastBaseStatus;
-    this._lastBaseStatus = 'down';
-    if (previous === 'up') {
-      console.log(`🔴 [n8n pinger] n8n UNREACHABLE at ${new Date().toISOString()} (was up, now failing)`);
-    }
-
-    console.log(`[n8n pinger] base ping FAILED: ${err.message} (${Date.now() - startedAt}ms)`);
-    if (this.retryCount < env.n8n.maxRetries) {
-      this.retryCount++;
-      console.log(`[n8n pinger] retry ${this.retryCount}/${env.n8n.maxRetries} in ${env.n8n.retryDelayMs/1000}s`);
-      this.retryTimer = setTimeout(() => this._ping(timeoutMs), env.n8n.retryDelayMs);
-      this.retryTimer.unref?.();
-    } else {
-      console.log(`[n8n pinger] retries exhausted, waiting for next tick`);
-      this.retryCount = 0;
-    }
   }
-}
 }
 
 module.exports = new N8nPinger();

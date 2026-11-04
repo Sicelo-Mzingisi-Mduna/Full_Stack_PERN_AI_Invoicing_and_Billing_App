@@ -97,8 +97,9 @@ module.exports = {
   },
 
   cronjob: {
-    apiKey: process.env.CRONJOB_API_KEY || "",
-    jobId:   process.env.CRONJOB_JOB_ID   || "",
+    apiKey:   process.env.CRONJOB_API_KEY || "",
+    jobId:    process.env.CRONJOB_JOB_ID || "",       // backend (existing)
+    n8nJobId: process.env.CRONJOB_N8N_JOB_ID || "",   // n8n (new)
   },
 };
 
