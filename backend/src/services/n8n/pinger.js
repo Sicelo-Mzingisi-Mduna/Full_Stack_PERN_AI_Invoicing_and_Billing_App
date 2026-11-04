@@ -17,15 +17,25 @@ class N8nPinger {
 
   /** Call from middleware on any real user request. */
   touch() {
-    if (!env.n8n.enabled) return;
-    this.lastActivityAt = Date.now();
-    if (!this.running) this.start();
-    console.log("[pinger] touch() — cronEnabled =", this.cronEnabled);
-    if (!this.cronEnabled) {
-      this.cronEnabled = true;
-      this._enableCrons();
-    }
+  if (!env.n8n.enabled) return;
+  this.lastActivityAt = Date.now();
+  if (!this.running) this.start();
+
+  // Debounce: attempt to enable at most once per 60 seconds.
+  // This handles:
+  //   - First request after a stop() → re-enables
+  //   - Manual disable outside the pinger → re-enables on next request
+  //   - Rapid-fire curls → only one enable call per minute
+  const now = Date.now();
+  const lastAttempt = this._lastCronEnableAttemptAt || 0;
+  if (now - lastAttempt > 60_000) {
+    this._lastCronEnableAttemptAt = now;
+    console.log("[pinger] touch() — attempting cron enable (debounced)");
+    this._enableCrons();
+  } else {
+    console.log(`[pinger] touch() — cron enable debounced (${Math.floor((now - lastAttempt) / 1000)}s ago)`);
   }
+}
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
