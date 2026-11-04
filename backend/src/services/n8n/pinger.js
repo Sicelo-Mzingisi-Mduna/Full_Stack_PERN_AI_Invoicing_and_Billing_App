@@ -36,16 +36,16 @@ class N8nPinger {
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
-    if (this.running || !env.n8n.enabled) return;
-    // Fresh session — state for wake-up logging
-    this._pingerStartedAt = Date.now();
-    this._lastBaseStatus = null;
-    this.running = true;
-    this._ping(env.n8n.initialTimeoutMs);
+  if (this.running || !env.n8n.enabled) return;
+  this._pingerStartedAt = Date.now();
+  this._lastBaseStatus = null;
+  this.lastActivityAt = Date.now();   // ← ADD: treat boot as activity
+  this.running = true;
+  this._ping(env.n8n.initialTimeoutMs);
 
-    this.interval = setInterval(() => this._tick(), env.n8n.pingIntervalMs);
-    this.interval.unref?.();
-  }
+  this.interval = setInterval(() => this._tick(), env.n8n.pingIntervalMs);
+  this.interval.unref?.();
+}
 
   async stop() {
     if (this.interval) clearInterval(this.interval);
@@ -81,47 +81,64 @@ class N8nPinger {
   }
 
   async _ping(timeoutMs) {
-    const startedAt = Date.now();
-    try {
-      const res = await request(env.n8n.baseUrl, { timeoutMs });
+  const startedAt = Date.now();
+  // Cache-bust: force Render's edge to check real state, not serve cached 503
+  const bustUrl = `${env.n8n.baseUrl}/?t=${Date.now()}`;
 
-      const previous = this._lastBaseStatus;
-      this._lastBaseStatus = 'up';
-      if (previous === 'down' || previous === null) {
-        const wakeMs = this._pingerStartedAt ? Date.now() - this._pingerStartedAt : null;
-        console.log(`🟢 [n8n pinger] n8n AWAKE at ${new Date().toISOString()} (wake took ${wakeMs}ms${previous === 'down' ? ', after failures' : ', fresh session'})`);
-      }
+  try {
+    const res = await request(bustUrl, { timeoutMs });
 
-      this.retryCount = 0;
-      this.lastStatus = res.status;
+    // LOG the status — this is the key diagnostic line
+    console.log(`[n8n pinger] base ping → ${res.status} (${Date.now() - startedAt}ms)`);
 
-      if (env.n8n.webhookUrl) {
-        try {
-          const wh = await request(env.n8n.webhookUrl, { timeoutMs: 15_000 });
-          this.lastStatus = await wh.text();
-          console.log(`[n8n pinger] webhook OK (total ${Date.now() - startedAt}ms)`);
-        } catch (err) {
-          this.lastStatus = null;
-          console.log(`[n8n pinger] webhook FAILED: ${err.message}`);
+    // Treat ANY non-2xx as "not ready" — throw so retries kick in
+    if (!res.ok) {
+      throw new Error(`base ping returned HTTP ${res.status}`);
+    }
+
+    // --- Success path (only reached on 2xx) ---
+    const previous = this._lastBaseStatus;
+    this._lastBaseStatus = 'up';
+    if (previous === 'down' || previous === null) {
+      const wakeMs = this._pingerStartedAt ? Date.now() - this._pingerStartedAt : null;
+      console.log(`🟢 [n8n pinger] n8n AWAKE at ${new Date().toISOString()} (wake took ${wakeMs}ms${previous === 'down' ? ', after failures' : ', fresh session'})`);
+    }
+
+    this.retryCount = 0;
+    this.lastStatus = res.status;
+
+    if (env.n8n.webhookUrl) {
+      try {
+        const wh = await request(env.n8n.webhookUrl, { timeoutMs: 15_000 });
+        if (!wh.ok) {
+          throw new Error(`webhook returned HTTP ${wh.status}`);
         }
-      }
-    } catch (err) {
-      const previous = this._lastBaseStatus;
-      this._lastBaseStatus = 'down';
-      if (previous === 'up') {
-        console.log(`🔴 [n8n pinger] n8n UNREACHABLE at ${new Date().toISOString()} (was up, now failing)`);
-      }
-
-      console.log(`[n8n pinger] base ping FAILED: ${err.message} (${Date.now() - startedAt}ms)`);
-      if (this.retryCount < env.n8n.maxRetries) {
-        this.retryCount++;
-        this.retryTimer = setTimeout(() => this._ping(timeoutMs), env.n8n.retryDelayMs);
-        this.retryTimer.unref?.();
-      } else {
-        this.retryCount = 0;
+        this.lastStatus = await wh.text();
+        console.log(`[n8n pinger] webhook OK (total ${Date.now() - startedAt}ms)`);
+      } catch (err) {
+        this.lastStatus = null;
+        console.log(`[n8n pinger] webhook FAILED: ${err.message}`);
       }
     }
+  } catch (err) {
+    const previous = this._lastBaseStatus;
+    this._lastBaseStatus = 'down';
+    if (previous === 'up') {
+      console.log(`🔴 [n8n pinger] n8n UNREACHABLE at ${new Date().toISOString()} (was up, now failing)`);
+    }
+
+    console.log(`[n8n pinger] base ping FAILED: ${err.message} (${Date.now() - startedAt}ms)`);
+    if (this.retryCount < env.n8n.maxRetries) {
+      this.retryCount++;
+      console.log(`[n8n pinger] retry ${this.retryCount}/${env.n8n.maxRetries} in ${env.n8n.retryDelayMs/1000}s`);
+      this.retryTimer = setTimeout(() => this._ping(timeoutMs), env.n8n.retryDelayMs);
+      this.retryTimer.unref?.();
+    } else {
+      console.log(`[n8n pinger] retries exhausted, waiting for next tick`);
+      this.retryCount = 0;
+    }
   }
+}
 }
 
 module.exports = new N8nPinger();
