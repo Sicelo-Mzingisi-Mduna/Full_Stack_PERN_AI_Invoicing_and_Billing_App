@@ -13,6 +13,7 @@ class N8nPinger {
     this.cronEnabled = false;
     this._lastBaseStatus = null;
     this._pingerStartedAt = null;
+    this._lastCronEnableAttemptAt = null;
   }
 
   /** Call from middleware on any real user request. */
