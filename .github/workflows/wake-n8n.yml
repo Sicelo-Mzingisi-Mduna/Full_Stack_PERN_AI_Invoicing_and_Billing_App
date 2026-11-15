@@ -1,7 +1,13 @@
 name: Wake n8n
 
 on:
-  workflow_dispatch:   # triggered by the pinger via API
+  workflow_dispatch:
+    inputs:
+      n8n_url:
+        description: 'The n8n instance URL to wake'
+        required: true
+        type: string
+        default: 'https://n8n-with-python-f7bi.onrender.com' # Fallback dev URL
 
 jobs:
   wake:
@@ -10,9 +16,9 @@ jobs:
     steps:
       - name: Send GET to n8n with 90s timeout
         run: |
-          echo "Sending GET to n8n with 90s timeout..."
+          echo "Waking n8n at: ${{ inputs.n8n_url }}"
           curl -s -o /dev/null -w "HTTP %{http_code} in %{time_total}s\n" \
             --max-time 90 \
             -H "Accept: text/html" \
-            https://n8n-with-python-f7bi.onrender.com || true
+            ${{ inputs.n8n_url }} || true
           echo "Done"
