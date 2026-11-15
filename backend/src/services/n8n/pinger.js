@@ -124,7 +124,7 @@ class N8nPinger {
         
         // Debounce: max 1 dispatch every 3 minutes (180,000 ms) to avoid spamming GitHub API
         const now = Date.now();
-        if (!this._lastGitHubDispatchAt || now - this._lastGitHubDispatchAt > 180_000) {
+        if (!this._lastGitHubDispatchAt || now - this._lastGitHubDispatchAt > 300_000) {
           this._lastGitHubDispatchAt = now;
           githubActions.dispatchWorkflow().catch((err) => {
             console.error(`[n8n pinger] GitHub wake dispatch failed: ${err.message}`);
