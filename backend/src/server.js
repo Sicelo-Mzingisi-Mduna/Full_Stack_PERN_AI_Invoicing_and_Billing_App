@@ -3,6 +3,7 @@ const http = require("http");
 const app = require("./app");
 const env = require("./config/env");
 const { connectDB, disconnectDB } = require("./config/db");
+const { pinger } = require("./services/n8n");
 
 let server;
 let shuttingDown = false;
@@ -10,6 +11,7 @@ let shuttingDown = false;
 async function start() {
   try {
     await connectDB();
+    pinger.start(); // start n8n pinger
 
     server = http.createServer(app);
     server.listen(env.port, "0.0.0.0", () => {
@@ -23,10 +25,16 @@ async function start() {
   }
 }
 
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`${signal} received — shutting down gracefully...`);
+  
+  try {
+    await pinger.stop();   // ← await the disable
+  } catch (e) {
+    console.error("Error stopping pinger:", e);
+  }
 
   if (!server) return process.exit(0);
 

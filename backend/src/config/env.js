@@ -67,6 +67,40 @@ module.exports = {
   clientOrigins: corsOrigins,
   geminiApiKey: process.env.GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+
+  // --- n8n integration (optional; toggle with N8N_ENABLED) ---
+  n8n: {
+    enabled: process.env.N8N_ENABLED !== "false", // on by default, opt-out
+    baseUrl: process.env.N8N_URL || "https://n8n-with-python-f7bi.onrender.com",
+    webhookUrl: process.env.N8N_WEBHOOK_URL || "",
+    pingIntervalMs: Number(process.env.N8N_PING_INTERVAL_MS) || 2 * 60 * 1000,
+    activeWindowMs: Number(process.env.N8N_ACTIVE_WINDOW_MS) || 60 * 60 * 1000,
+    initialTimeoutMs: Number(process.env.N8N_INITIAL_TIMEOUT_MS) || 60_000,
+    retryDelayMs: Number(process.env.N8N_RETRY_DELAY_MS) || 10_000,
+    maxRetries: Number(process.env.N8N_MAX_RETRIES) || 5,
+    loggers: {
+      general: {
+        webhookUrl: process.env.N8N_LOG_GENERAL_WEBHOOK_URL || "",
+        secret:     process.env.N8N_LOG_GENERAL_WEBHOOK_SECRET || "",
+      },
+      //Request logger, for requests sent to my API (e.g. from n8n workflows). This is useful for debugging and auditing.
+      requests: {
+        webhookUrl: process.env.N8N_LOG_REQUESTS_WEBHOOK_URL || "",
+        secret:     process.env.N8N_LOG_REQUESTS_WEBHOOK_SECRET || "",
+      },
+      // errors logger, to log errors that are picked up by my API
+      // errors: {
+      //   webhookUrl: process.env.N8N_LOG_ERRORS_WEBHOOK_URL || "",
+      //   secret:     process.env.N8N_LOG_ERRORS_WEBHOOK_SECRET || "",
+      // },
+      },
+  },
+
+  cronjob: {
+    apiKey:   process.env.CRONJOB_API_KEY || "",
+    jobId:    process.env.CRONJOB_JOB_ID || "",       // backend (existing)
+    n8nJobId: process.env.CRONJOB_N8N_JOB_ID || "",   // n8n (new)
+  },
 };
 
 // code "$env:USERPROFILE\.secrets\ai-invoice-manager\.env"
