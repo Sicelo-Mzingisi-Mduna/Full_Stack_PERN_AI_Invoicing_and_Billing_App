@@ -101,6 +101,14 @@ module.exports = {
     jobId:    process.env.CRONJOB_JOB_ID || "",       // backend (existing)
     n8nJobId: process.env.CRONJOB_N8N_JOB_ID || "",   // n8n (new)
   },
+
+  githubActions: {
+    token:    process.env.GITHUB_ACTIONS_TOKEN || "",
+    owner:    process.env.GITHUB_ACTIONS_OWNER || "",
+    repo:     process.env.GITHUB_ACTIONS_REPO || "",
+    workflow: process.env.GITHUB_ACTIONS_WORKFLOW || "",
+    ref:      process.env.GITHUB_ACTIONS_REF || "main",
+  },
 };
 
 // code "$env:USERPROFILE\.secrets\ai-invoice-manager\.env"
