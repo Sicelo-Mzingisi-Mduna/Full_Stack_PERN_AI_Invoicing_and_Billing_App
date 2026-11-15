@@ -1,6 +1,7 @@
 const env = require("../../config/env");
 const { request } = require("./n8nClient");
 const cronJob = require("../cronjob");
+const githubActions = require("../github/githubController"); // Added GitHub Controller
 
 class N8nPinger {
   constructor() {
@@ -14,29 +15,30 @@ class N8nPinger {
     this._lastBaseStatus = null;
     this._pingerStartedAt = null;
     this._lastCronEnableAttemptAt = null;
+    this._lastGitHubDispatchAt = null; // Added debounce tracker for GitHub
   }
 
   /** Call from middleware on any real user request. */
   touch() {
-  if (!env.n8n.enabled) return;
-  this.lastActivityAt = Date.now();
-  if (!this.running) this.start();
+    if (!env.n8n.enabled) return;
+    this.lastActivityAt = Date.now();
+    if (!this.running) this.start();
 
-  // Debounce: attempt to enable at most once per 60 seconds.
-  // This handles:
-  //   - First request after a stop() → re-enables
-  //   - Manual disable outside the pinger → re-enables on next request
-  //   - Rapid-fire curls → only one enable call per minute
-  const now = Date.now();
-  const lastAttempt = this._lastCronEnableAttemptAt || 0;
-  if (now - lastAttempt > 60_000) {
-    this._lastCronEnableAttemptAt = now;
-    console.log("[pinger] touch() — attempting cron enable (debounced)");
-    this._enableCrons();
-  } else {
-    console.log(`[pinger] touch() — cron enable debounced (${Math.floor((now - lastAttempt) / 1000)}s ago)`);
+    // Debounce: attempt to enable at most once per 60 seconds.
+    // This handles:
+    //   - First request after a stop() → re-enables
+    //   - Manual disable outside the pinger → re-enables on next request
+    //   - Rapid-fire curls → only one enable call per minute
+    const now = Date.now();
+    const lastAttempt = this._lastCronEnableAttemptAt || 0;
+    if (now - lastAttempt > 60_000) {
+      this._lastCronEnableAttemptAt = now;
+      console.log("[pinger] touch() — attempting cron enable (debounced)");
+      this._enableCrons();
+    } else {
+      console.log(`[pinger] touch() — cron enable debounced (${Math.floor((now - lastAttempt) / 1000)}s ago)`);
+    }
   }
-}
 
   /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
@@ -76,27 +78,27 @@ class N8nPinger {
   async _enableCrons() {
     const results = await Promise.allSettled([
       cronJob.enableBackend(),
-      cronJob.enableN8n(),
+      githubActions.dispatchWorkflow(), // Replaces cronJob.enableN8n()
     ]);
     const failed = results.filter((r) => r.status === "rejected");
     if (failed.length > 0) {
-      console.error(`[pinger] cron enable failed for ${failed.length} job(s) — will retry on next touch`);
+      console.error(`[pinger] cron/wake enable failed for ${failed.length} job(s) — will retry on next touch`);
       this.cronEnabled = false;
       return;
     }
-    console.log("[pinger] both cron jobs enabled");
+    console.log("[pinger] backend cron enabled and GitHub wake dispatched");
   }
 
   async _disableCrons() {
     const results = await Promise.allSettled([
       cronJob.disableBackend(),
-      cronJob.disableN8n(),
+      // No GitHub disable needed. It's a one-shot event.
     ]);
     const failed = results.filter((r) => r.status === "rejected");
     if (failed.length > 0) {
       console.error(`[pinger] cron disable failed for ${failed.length} job(s)`);
     } else {
-      console.log("[pinger] both cron jobs disabled");
+      console.log("[pinger] backend cron disabled (GitHub requires no disable)");
     }
   }
 
@@ -115,11 +117,19 @@ class N8nPinger {
       console.log(`[n8n pinger] base ping → ${res.status} (${Date.now() - startedAt}ms)`);
 
       // 429 (Cloudflare) or 503 (Render booting) = not ready.
-      // Cron #1 will handle the wake from its unblocked IPs. Skip retries.
       if (res.status === 429 || res.status === 503) {
         this._lastBaseStatus = 'down';
         this.retryCount = 0;
-        console.log(`[n8n pinger] ${res.status} — cron #1 will wake n8n, skipping retries`);
+        console.log(`[n8n pinger] ${res.status} — n8n asleep, dispatching GitHub wake...`);
+        
+        // Debounce: max 1 dispatch every 3 minutes (180,000 ms) to avoid spamming GitHub API
+        const now = Date.now();
+        if (!this._lastGitHubDispatchAt || now - this._lastGitHubDispatchAt > 180_000) {
+          this._lastGitHubDispatchAt = now;
+          githubActions.dispatchWorkflow().catch((err) => {
+            console.error(`[n8n pinger] GitHub wake dispatch failed: ${err.message}`);
+          });
+        }
         return;
       }
 
