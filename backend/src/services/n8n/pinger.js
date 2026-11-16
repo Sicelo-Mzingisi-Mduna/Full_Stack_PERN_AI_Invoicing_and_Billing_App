@@ -18,7 +18,6 @@ class N8nPinger {
     this._lastGitHubDispatchAt = null; // Added debounce tracker for GitHub
   }
 
-  /** Call from middleware on any real user request. */
   touch() {
     if (!env.n8n.enabled) return;
     this.lastActivityAt = Date.now();
@@ -40,12 +39,10 @@ class N8nPinger {
     }
   }
 
-  /** Start immediately (call from server.js so n8n is warm before traffic). */
   start() {
     if (this.running || !env.n8n.enabled) return;
     this._pingerStartedAt = Date.now();
     this._lastBaseStatus = null;
-    // NOTE: do NOT set lastActivityAt here — only touch() marks real user activity.
     this.running = true;
     this._ping(env.n8n.initialTimeoutMs);
 
@@ -67,7 +64,6 @@ class N8nPinger {
 
     await this._disableCrons();
 
-    // RACE GUARD: touch() may have restarted the pinger during our await.
     if (this.running) {
       console.warn("[pinger] restart detected during cron disable — re-enabling");
       this.cronEnabled = true;
@@ -133,15 +129,14 @@ class N8nPinger {
         return;
       }
 
-      if (!res.ok) {
-        throw new Error(`base ping returned HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`base ping returned HTTP ${res.status}`);
 
       const previous = this._lastBaseStatus;
       this._lastBaseStatus = 'up';
       if (previous === 'down' || previous === null) {
         const wakeMs = this._pingerStartedAt ? Date.now() - this._pingerStartedAt : null;
         console.log(`🟢 [n8n pinger] n8n AWAKE at ${new Date().toISOString()} (wake took ${wakeMs}ms${previous === 'down' ? ', after failures' : ', fresh session'})`);
+        process.emit('n8n:awake'); // ← THIS FLUSHES THE QUEUE IMMEDIATELY
       }
 
       this.retryCount = 0;
@@ -150,9 +145,7 @@ class N8nPinger {
       if (env.n8n.webhookUrl) {
         try {
           const wh = await request(env.n8n.webhookUrl, { timeoutMs: 15_000 });
-          if (!wh.ok) {
-            throw new Error(`webhook returned HTTP ${wh.status}`);
-          }
+          if (!wh.ok) throw new Error(`webhook returned HTTP ${wh.status}`);
           this.lastStatus = await wh.text();
           console.log(`[n8n pinger] webhook OK (total ${Date.now() - startedAt}ms)`);
         } catch (err) {

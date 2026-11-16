@@ -4,6 +4,7 @@ const app = require("./app");
 const env = require("./config/env");
 const { connectDB, disconnectDB } = require("./config/db");
 const { pinger } = require("./services/n8n");
+const { loggers } = require("./services/n8n");
 
 let server;
 let shuttingDown = false;
@@ -34,6 +35,13 @@ async function shutdown(signal) {
     await pinger.stop();   // ← await the disable
   } catch (e) {
     console.error("Error stopping pinger:", e);
+  }
+
+  try {
+    Object.values(loggers).forEach((l) => l._stop?.());
+    console.log("Log queues stopped.");
+  } catch (e) {
+    console.error("Error stopping log queues:", e);
   }
 
   if (!server) return process.exit(0);
