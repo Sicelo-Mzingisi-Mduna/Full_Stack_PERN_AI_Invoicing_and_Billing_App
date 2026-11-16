@@ -2,56 +2,123 @@
 const env = require("../../config/env");
 const { request } = require("./n8nClient");
 
-/**
- * Create a logger bound to one specific n8n webhook.
- * @param {Object} opts
- * @param {string} opts.webhookUrl - Full URL to the n8n webhook for this logger.
- * @param {string} [opts.secret]   - Shared secret sent as x-webhook-secret header.
- * @param {string} opts.event      - Logical event name (used for routing in n8n).
- * @returns {{ debug, info, warn, error }}
- */
+class LogQueue {
+  constructor(name, options = {}) {
+    this.name = name;
+    this.queue = [];
+    this.maxSize = options.maxSize ?? 200;
+    this.flushIntervalMs = options.flushIntervalMs ?? 30_000;
+    this.maxAttempts = options.maxAttempts ?? 20;
+    this.flushTimer = null;
+    this.flushing = false;
+  }
+
+  enqueue(payload) {
+    if (this.queue.length >= this.maxSize) {
+      this.queue.shift(); // drop oldest
+      console.warn(`[logQueue:${this.name}] full — dropped oldest entry`);
+    }
+    this.queue.push({ payload, attempts: 0, queuedAt: Date.now() });
+  }
+
+  async flushOnce(webhookUrl, secret) {
+    if (this.flushing || this.queue.length === 0) return;
+    this.flushing = true;
+
+    try {
+      const batch = this.queue.slice();
+      for (const item of batch) {
+        try {
+          const res = await request(webhookUrl, {
+            method: "POST",
+            body: item.payload,
+            timeoutMs: 5_000,
+            headers: secret ? { "x-webhook-secret": secret } : {},
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          
+          // Success — remove from queue
+          this.queue = this.queue.filter((q) => q !== item);
+          console.log(`[logQueue:${this.name}] flushed successfully (queue: ${this.queue.length})`);
+        } catch (err) {
+          item.attempts++;
+          if (item.attempts >= this.maxAttempts) {
+            this.queue = this.queue.filter((q) => q !== item);
+            console.warn(`[logQueue:${this.name}] gave up after ${this.maxAttempts} attempts: ${err.message}`);
+          }
+        }
+      }
+    } finally {
+      this.flushing = false;
+    }
+  }
+
+  start(webhookUrl, secret) {
+    if (this.flushTimer || !webhookUrl) return;
+
+    // Flush on schedule
+    this.flushTimer = setInterval(() => {
+      this.flushOnce(webhookUrl, secret).catch(() => {});
+    }, this.flushIntervalMs);
+    this.flushTimer.unref?.();
+
+    // Flush immediately when pinger reports n8n is up
+    process.on("n8n:awake", () => {
+      this.flushOnce(webhookUrl, secret).catch(() => {});
+    });
+  }
+
+  stop() {
+    if (this.flushTimer) clearInterval(this.flushTimer);
+    this.flushTimer = null;
+  }
+
+  size() {
+    return this.queue.length;
+  }
+}
+
 function createLogger({ webhookUrl, secret, event }) {
+  const queue = new LogQueue(event);
+
   function send(level, message, meta) {
     if (!env.n8n.enabled || !webhookUrl) return;
 
     const payload = {
-      event,
-      level,
-      message,
-      meta,
+      event, level, message, meta,
       service: "ai-invoice-manager-api",
       env: env.nodeEnv,
       timestamp: new Date().toISOString(),
     };
 
-    // Fire-and-forget: never block or crash the request path.
     request(webhookUrl, {
       method: "POST",
       body: payload,
       timeoutMs: 5_000,
       headers: secret ? { "x-webhook-secret": secret } : {},
-    }).catch((err) =>
-      console.error(`[n8n logger:${event}] failed: ${err.message}`)
-    );
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Success — done
+      })
+      .catch((err) => {
+        queue.enqueue(payload);
+        console.log(`[n8n logger:${event}] failed (${err.message}) — queued (queue: ${queue.size()})`);
+      });
+  }
+
+  // Start the retry loop
+  if (env.n8n.enabled && webhookUrl) {
+    queue.start(webhookUrl, secret);
   }
 
   return {
-    
-    // 1) Urgent — e.g "The server is down, page someone now"
-    //something that needs fixing
     error: (msg, meta) => send("error", msg, meta),
-
-    // 2) High — e.g "payments are failing, fix it today"
-    //something to keep an eye on
     warn:  (msg, meta) => send("warn",  msg, meta),
-
-    // 3) Normal — e.g "user created an invoice, FYI"
-    //the story of what your app is doing
     info:  (msg, meta) => send("info",  msg, meta),
-
-    // 4) Low — e.g "here's a debug trace, ignore unless investigating"
-    //noise you only want while debugging
     debug: (msg, meta) => send("debug", msg, meta),
+    _queue: queue,
+    _stop: () => queue.stop(),
   };
 }
 
